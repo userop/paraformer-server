@@ -1,0 +1,8 @@
+paraformer-zh:
+  model_path: /data1/models/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch
+paraformer-zh-streaming:
+  model_path: /data1/models/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online
+  n_chunk_frame: 10
+  n_chunk_feature: 5
+  encoder_chunk_size: 4
+  decoder_chunk_size: 1
