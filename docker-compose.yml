@@ -1,0 +1,13 @@
+version: "3.8"
+services:
+  asr_serve:
+    image: paraformer_serve:latest
+    restart: always
+    environment:
+      APP_N_WORKERS: ${APP_N_WORKERS:-4}
+      CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES-0}
+    ports:
+# 宿主机端口：容器端口
+      - "8400:8400"
+    volumes:
+      - ./model.yaml:/app/serve/model.yaml
