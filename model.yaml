@@ -6,3 +6,4 @@ paraformer-zh-streaming:
   n_chunk_feature: 5
   encoder_chunk_size: 4
   decoder_chunk_size: 1
+debug: true

@@ -163,7 +163,6 @@ def binary_vad_segments(
     return segments
 
 
-
 class VADStreamProcessor:
     """
     流式 webrtcvad 封装：
@@ -265,7 +264,7 @@ class VADStreamProcessor:
                 # 因此后续调用仍会保留上下文；但同时本次调用会即时返回这一段供 ASR 使用。
                 out.append((segment, start_time, end_time))
 
-        return out
+        return out[0][0]
 
 
 class Model:
