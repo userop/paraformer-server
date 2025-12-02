@@ -8,6 +8,11 @@ import os
 import numpy
 import subprocess
 from funasr import AutoModel
+import webrtcvad
+from collections import deque
+import math
+import numpy as np
+from typing import List, Tuple, Optional
 
 from config import asr_config
 
@@ -105,6 +110,163 @@ def convert_audio_to_pcm(data: bytes, input_format: str = None, sr: int = 16000,
             else:
                 print(f"⚠️ Warning: could not remove temporary file {path}")
 
+def binary_vad_segments(
+    data: bytes,
+    input_format: Optional[str] = None,
+    sr: int = 16000,
+    frame_ms: int = 20,
+    vad_mode: int = 3,
+    padding_frames: int = 8,
+    start_prop: float = 0.6,
+    end_prop: float = 0.9,
+    return_pcm: bool = True,
+    feed_chunk_frames: int = 50,
+    se_model=None
+) -> List[Tuple[bytes, float, float]]:
+    """
+    使用 VADStreamProcessor（流式）对一次性二进制音频做 VAD 分段。
+    行为与原 binary_vad_segments 保持兼容（返回 pcm bytes + start/end 秒）。
+    feed_chunk_frames: 每次传入 accept 的帧数（默认 50 帧），可根据内存/延迟调整。
+    """
+    # 1) 转换为 PCM int16 mono bytes
+    pcm_bytes = convert_audio_to_pcm(data, input_format=input_format, sr=sr, ac=1)
+    pcm_bytes = se_model.enhance(pcm_bytes)
+
+    # 2) 创建流式 VAD 处理器（参数与函数参数一致）
+    vad_proc = VADStreamProcessor(sample_rate=sr, frame_ms=frame_ms, vad_mode=vad_mode,
+                                  padding_frames=padding_frames, start_prop=start_prop, end_prop=end_prop)
+
+    # 3) 分块 feed 给 accept（accept 会处理 leftover）
+    frame_bytes = vad_proc.frame_bytes
+    chunk_size = frame_bytes * max(1, int(feed_chunk_frames))
+    segments = []
+
+    offset = 0
+    data_len = len(pcm_bytes)
+    while offset < data_len:
+        end = min(offset + chunk_size, data_len)
+        chunk = pcm_bytes[offset:end]
+        out = vad_proc.accept(chunk, is_final=False)
+        if out:
+            # out 是 list of (segment_bytes, start_time, end_time)
+            segments.extend(out)
+        offset = end
+
+    # 4) flush 剩余（流结束）
+    final_out = vad_proc.accept(b"", is_final=True)
+    if final_out:
+        segments.extend(final_out)
+
+    # 5) 返回（保留原行为）
+    if not return_pcm:
+        return []
+    return segments
+
+
+
+class VADStreamProcessor:
+    """
+    流式 webrtcvad 封装：
+    - 接收原始 PCM bytes (int16 little-endian, 16kHz 单声道)
+    - 按帧判断 speech，并输出已合并的 voiced-segment bytes
+    使用方法：对每个流片段调用 .accept(raw_bytes, is_final=False)
+    当返回非 None 时，得到一个已准备好送 ASR 的 segment
+    """
+    def __init__(self, sample_rate=16000, frame_ms=20, vad_mode=3, padding_frames=8, start_prop=0.6, end_prop=0.9):
+        assert frame_ms in (10,20,30)
+        self.sample_rate = sample_rate
+        self.frame_ms = frame_ms
+        self.vad = webrtcvad.Vad(vad_mode)
+        self.frame_bytes = int(sample_rate * (frame_ms/1000.0) * 2)  # 2 bytes per sample int16
+        self.padding_frames = padding_frames  # hang-over frames for end detection
+        self.start_prop = start_prop
+        self.end_prop = end_prop
+
+        # internal buffers
+        self._ring = deque(maxlen=padding_frames)
+        self._triggered = False
+        self._voiced_frames = []
+        self._timestamp = 0.0
+        self._frame_duration = frame_ms / 1000.0
+        self._leftover = b""  # bytes leftover smaller than frame_bytes
+
+    def _frame_iter(self, data: bytes):
+        """
+        把 data 分帧，返回 iterator of (timestamp, frame)
+        """
+        data = self._leftover + data
+        offset = 0
+        while offset + self.frame_bytes <= len(data):
+            chunk = data[offset: offset + self.frame_bytes]
+            frame_timestamp = self._timestamp
+            self._timestamp += self._frame_duration
+            yield frame_timestamp, chunk
+            offset += self.frame_bytes
+        # leftover keep for next call
+        self._leftover = data[offset:]
+
+    def accept(self, data: bytes, is_final: bool = False):
+        """
+        传入原始 bytes（可以是任意长度），返回列表 of (segment_bytes, start_time, end_time)
+        行为修改：只要本次调用中有声音帧（timestamp >= 本次调用开始时刻），就会把本次调用中出现的声音合成一个片段返回。
+        """
+        out = []
+        # 记录本次调用开始时的时间戳，用于区分本次调用中新加入的帧
+        call_start_ts = self._timestamp
+        for ts, frame in self._frame_iter(data):
+            # 判断当前帧是否为语音
+            try:
+                is_speech = self.vad.is_speech(frame, sample_rate=self.sample_rate)
+            except Exception:
+                # 如果 frame 长度不对或 webrtcvad 抛错，视为静音
+                is_speech = False
+
+            if not self._triggered:
+                # 未触发：维护 ring，可能会触发 start
+                self._ring.append((ts, frame, is_speech))
+                num_voiced = len([1 for _, _, s in self._ring if s])
+                if num_voiced > int(self.start_prop * self._ring.maxlen):
+                    # start speech: flush ring 到 voiced_frames（保持时间戳）
+                    self._triggered = True
+                    for r in self._ring:
+                        self._voiced_frames.append((r[0], r[1]))
+                    self._ring.clear()
+            else:
+                # 已在语音段中：继续追加到 voiced_frames 并维护 ring（用于 end 判断）
+                self._voiced_frames.append((ts, frame))
+                self._ring.append((ts, frame, is_speech))
+                num_unvoiced = len([1 for _, _, s in self._ring if not s])
+                if num_unvoiced > int(self.end_prop * self._ring.maxlen):
+                    self._triggered = False
+                    self._voiced_frames = []
+                    self._ring.clear()
+
+        # is_final flush （保留原行为）
+        if is_final and self._voiced_frames:
+            start_time = self._voiced_frames[0][0]
+            end_time = self._voiced_frames[-1][0] + self._frame_duration
+            segment = b"".join([f for _, f in self._voiced_frames])
+            out.append((segment, start_time, end_time))
+            self._triggered = False
+            self._voiced_frames = []
+            self._ring.clear()
+            return out
+
+        # 新增逻辑：如果本次调用期间（timestamp >= call_start_ts）有新增的 voiced_frames，
+        # 将本次调用新增部分合成一个即时返回段（用于低延迟实时识别）。
+        if self._voiced_frames:
+            # 找出本次调用中 timestamp >= call_start_ts 的帧
+            new_frames = [(t, f) for (t, f) in self._voiced_frames if t >= call_start_ts]
+            if new_frames:
+                start_time = new_frames[0][0]
+                end_time = new_frames[-1][0] + self._frame_duration
+                segment = b"".join([f for _, f in new_frames])
+                # 注意：这里我们不清除 _voiced_frames 中的内容（保持流连续性），
+                # 因此后续调用仍会保留上下文；但同时本次调用会即时返回这一段供 ASR 使用。
+                out.append((segment, start_time, end_time))
+
+        return out
+
 
 class Model:
     """
@@ -115,6 +277,8 @@ class Model:
         self._cache = {}
         self._lock = threading.Lock()
         self._model = AutoModel(model=model, device=device, disable_update=True)
+        # 每个模型实例维护一个 VAD 处理器（参数可调整）
+        self._vad_proc = VADStreamProcessor(sample_rate=16000, frame_ms=20, vad_mode=3, padding_frames=8)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self._cache.clear()
@@ -155,6 +319,66 @@ class Model:
                              encoder_chunk_look_back=asr_config.encoder_chunk_size,
                              decoder_chunk_look_back=asr_config.decoder_chunk_size)
         return res[0]["text"]
+
+# 流式接收带 VAD 的接口
+    def audio_stream_recognition_with_vad(self, data: bytes, is_final: bool = False, enforce_float=True):
+        """
+        data: 原始 PCM int16 bytes（16k, 16-bit, mono）
+        is_final: 标记当前 chunk 是流的结束
+        返回：list of result texts（可能为空）
+        说明：
+          调用vad获取到有人声的语音部分再调用模型进行文字识别
+        """
+        prob,data = self._rn.denoise_chunk(audio_data)
+        results = []
+        # 获取由 VAD 输出的完整 segment 列表
+        segments = self._vad_proc.accept(data, is_final=is_final)
+        for seg_bytes, start_t, end_t in segments:
+            # seg_bytes 是 int16 PCM bytes；转换为 float32 [-1,1]
+            np_asr_float32 = numpy.frombuffer(seg_bytes, dtype=numpy.int16).astype(numpy.float32) / 32768.0
+            # 调用现有 generate（保留 cache 与 chunk 参数）
+            res = self._model.generate(input=np_asr_float32, cache=self._cache, is_final=is_final,
+                                       chunk_size=[0, asr_config.n_chunk_frame, asr_config.n_chunk_feature],
+                                       encoder_chunk_look_back=asr_config.encoder_chunk_size,
+                                       decoder_chunk_look_back=asr_config.decoder_chunk_size)
+            # 可能一次生成多个 hypothesis，依你现有用法取第一个
+            if res and isinstance(res, list):
+                results.append(res[0].get("text", ""))
+            else:
+                results.append("")
+        return results
+
+# 二进制文件调用vad优化版
+    def batch_recognition_with_vad(self, data: bytes,
+                                   input_format: Optional[str] = None,
+                                   run_asr_per_segment: bool = True,
+                                   sr: int = 16000,
+                                   vad_kwargs: dict = None):
+        """
+            data: 原始 二进制数据
+            返回：list of result texts（可能为空）
+            说明：
+              将语音文件转化成标准格式，调用vad获取到有人声的语音部分再调用模型进行文字识别
+        """
+        vad_kwargs = vad_kwargs or {}
+        # 确保把 sr 透传给 binary_vad_segments
+        segments = binary_vad_segments(data, input_format=input_format, sr=sr, se_model =self.se_model, **vad_kwargs)
+        results = []
+        for seg_bytes, s, e in segments:
+            text = ""
+            if run_asr_per_segment:
+                try:
+                    np_float = numpy.frombuffer(seg_bytes, dtype=numpy.int16).astype(numpy.float32) / 32768.0
+                    res = self._model.generate(input=np_float, cache=self._cache, is_final=True,
+                                               chunk_size=[0, asr_config.n_chunk_frame, asr_config.n_chunk_feature],
+                                               encoder_chunk_look_back=asr_config.encoder_chunk_size,
+                                               decoder_chunk_look_back=asr_config.decoder_chunk_size)
+                    if res and isinstance(res, list):
+                        text = res[0].get("text", "")
+                except Exception as exc:
+                    print("batch_recognition_with_vad ASR error:", exc)
+            results.append((text, s, e))
+        return results
 
 
 class ModelList:
@@ -216,3 +440,29 @@ class ParaModelASR:
 
 
 asr_model = ParaModelASR()
+
+if __name__ == "__main__":
+    import sys
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Test batch_recognition_with_vad function")
+    parser.add_argument("audio_file", help="Path to the audio file to process")
+    parser.add_argument("--device", default="cpu", help="Device to run the model on (e.g., cpu, cuda:0)")
+    parser.add_argument("--model-path", default=asr_config.zh_model, help="Path to the ASR model")
+
+    args = parser.parse_args()
+
+    # 初始化模型
+    model = Model(args.device, args.model_path)
+
+    # 读取音频文件
+    with open(args.audio_file, "rb") as f:
+        audio_data = f.read()
+
+    # 调用 batch_recognition_with_vad 进行识别
+    results = model.batch_recognition_with_vad(audio_data)
+
+    # 打印结果
+    for i, (text, start, end) in enumerate(results):
+        print(f"Segment {i+1}: [{start:.2f}s - {end:.2f}s] {text}")
+

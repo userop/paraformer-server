@@ -10,6 +10,7 @@ from starlette.websockets import WebSocketState
 
 from config import asr_config
 from model_serve import asr_model
+from model_serve import VADStreamProcessor
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -22,6 +23,26 @@ async def lifespan(_app: FastAPI):
     asr_model.clear()
 
 app = FastAPI(lifespan=lifespan)
+
+def save_audio_to_wav(audio_data: bytearray, filename: str = None):
+    """
+        将音频数据保存为WAV文件
+        :param audio_data: 音频字节数据
+        :param filename: 保存的文件名，
+    """
+    import datetime
+    if filename is None:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
+        filepath = os.path.join("recorded_audios", filename)
+
+    #创建WAV文件
+    with wave.open(filepath, 'wb') as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(1600)
+        wf.writeframes(audio_data)
+
+    print(f"保存文件：{filepath}")
 
 
 @app.post("/v1/audio/transcriptions")
@@ -51,32 +72,55 @@ async def recognize_audio_stream(websocket: WebSocket):
     :param websocket:
     :return:
     """
+    #数据初始化
+    vad_processor = VADStreamProcessor()
     await websocket.accept()
     audio_buffer = bytearray()
     chunk_size = asr_config.chunk_size_bits
+    # 用于保存音频数据的列表
+    received_audio_data = bytearray()
     with asr_model.recognize(stream=True) as model:
         while True:
             message = await websocket.receive()
             # 客户端断开
             if message["type"] == "websocket.disconnect":
+                save_audio_to_wav(audio_buffer)
                 break
             # 接收到数据
             if message["type"] == "websocket.receive":
                 # 二进制音频
                 if "bytes" in message:
-                    audio_buffer.extend(message["bytes"])
+                    audio = vad_processor.accept(data=message["bytes"])
+                    if audio is not None:
+                        if audio[0][0] is not "":
+                            audio_buffer.extend(audio[0][0])
                     while len(audio_buffer) >= chunk_size:
                         buffer = audio_buffer[:chunk_size]
-                        text = model.audio_stream_recognition(buffer)
-                        await websocket.send_json({"text": text, "is_final": False})
+                        raw = model.audio_stream_recognition(buffer)
+                        # 规范化返回：支持 None / "" / [] / [""] 等
+                        texts = []
+                        if raw is None:
+                            texts = []
+                        elif isinstance(raw, (list, tuple)):
+                            #过滤空字符
+                            texts = [t for t in raw if t is not None and str(t).strip() != ""]
+                        else:
+                            s = str(raw)
+                            if s.strip() != "":
+                                texts = [s]
+                        if texts:
+                            text = "".join(texts)
+                            if websocket.client_state == WebSocketState.CONNECTED:
+                                await websocket.send_json({"text": text, "is_final": False})
                         audio_buffer = audio_buffer[chunk_size:]
                 # 文本控制帧
                 elif "text" in message:
                     try:
                         ctrl = json.loads(message["text"])
                         if ctrl.get("type") == "end":
+                            save_audio_to_wav(received_audio_data)
                             audio_buffer += b'\x00' * (chunk_size - len(audio_buffer))
-                            final_text = model.audio_stream_recognition(audio_buffer, is_final=True)
+                            final_text = model.audio_stream_recognition_with_vad(audio_buffer, is_final=True)
                             if websocket.client_state == WebSocketState.CONNECTED:
                                 await websocket.send_json({
                                     "text": final_text,
