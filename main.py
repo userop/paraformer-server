@@ -57,13 +57,17 @@ async def recognize_audio_stream(websocket: WebSocket):
     audio_cache = AudioCache()
     vad_processor = VADStreamProcessor()
     with asr_model.recognize(stream=True) as model:
-        while True:
-            data = await asyncio.wait_for(websocket.receive_bytes(), timeout=5)
-            audio_cache.append_meta(data, vad_processor.accept, )
-            for pcm_buf in audio_cache:
-                text = model.audio_stream_recognition(pcm_buf)
-                if websocket.client_state == WebSocketState.CONNECTED:
-                    await websocket.send_json({"text": text.replace(' ', ''), "is_final": audio_cache.final})
+        try:
+            while True:
+                data = await asyncio.wait_for(websocket.receive_bytes(), timeout=5)
+                audio_cache.append_meta(data, vad_processor.accept)
+                for pcm_buf in audio_cache:
+                    text = model.audio_stream_recognition(pcm_buf)
+                    if websocket.client_state == WebSocketState.CONNECTED:
+                        await asyncio.wait_for(websocket.send_json(
+                            {"text": text.replace(' ', ''), "is_final": audio_cache.final}), timeout=5)
+        except asyncio.TimeoutError:
+            print("websocket timeout")
 
 @app.get("/health")
 async def health():

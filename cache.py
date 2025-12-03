@@ -15,11 +15,14 @@ class AudioCache:
 
     如果开启debug，保存接收到的原始流式音频文件
     """
+    SEQUENCE_TIME = 0.3     # 考虑到vad接受的片段长度
+    STOP_TIME = 0.6     # ASR模型接受的片段长度
+
     def __init__(self):
         self._meta_cache: List[Tuple[float, bytes]] = []
         self._raw_buffer = bytearray()
         self._last_time = 0
-        self._seg_len = 0
+        self._stop_time = 0
         self.final = False
         if asr_config.debug:
             self.pcm_buffer = bytearray()
@@ -39,7 +42,7 @@ class AudioCache:
         timestamp, _ = struct.unpack(">dI", data[:12])
         if asr_config.debug:
             self.pcm_buffer.extend(data[12:])
-        if timestamp <= self._last_time:
+        if timestamp < self._last_time:
             return
         if _ == 0:
             bits = self._hand_frame(vad_call, is_final=True,**kwargs)
@@ -47,26 +50,33 @@ class AudioCache:
                 self._raw_buffer.extend(bits)
             self.final = True
             return
-        self._seg_len += _
         bisect.insort(self._meta_cache, (timestamp, data[12:]))
-        if self._seg_len >= asr_config.chunk_size_bits:
+        if timestamp - self._last_time >= self.SEQUENCE_TIME:
             bits = self._hand_frame(vad_call, **kwargs)
+            # 如果是静音片段，计算超时时间
             if len(bits):
                 self._raw_buffer.extend(bits)
+            else:
+                self._stop_time = timestamp - self._last_time
             self._last_time = self._meta_cache[-1][0]
-            self._seg_len = 0
             self._meta_cache.clear()
 
     def __iter__(self):
+        """
+        中间停顿型的静音，会导致停顿前的部分字符无法识别。
+        :return:
+        """
         if self.final:
             if asr_config.debug:
                 self.debug_save()
-            if self._seg_len >0:
+            if len(self._raw_buffer) > 0:
                 yield self._raw_buffer + b'\x00' * (asr_config.chunk_size_bits - len(self._raw_buffer))
         else:
             while len(self._raw_buffer) >= asr_config.chunk_size_bits:
                 yield self._raw_buffer[:asr_config.chunk_size_bits]
                 self._raw_buffer = self._raw_buffer[asr_config.chunk_size_bits:]
+            if self._stop_time >= self.STOP_TIME:
+                yield self._raw_buffer + b'\x00' * (asr_config.chunk_size_bits - len(self._raw_buffer))
 
     def _hand_frame(self, call: Callable, **kwargs):
         _pcm = bytearray()
