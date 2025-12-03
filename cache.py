@@ -42,7 +42,7 @@ class AudioCache:
         if timestamp <= self._last_time:
             return
         if _ == 0:
-            bits = self._hand_frame(vad_call, **kwargs)
+            bits = self._hand_frame(vad_call, is_final=True,**kwargs)
             if len(bits):
                 self._raw_buffer.extend(bits)
             self.final = True
@@ -78,7 +78,7 @@ class AudioCache:
         from datetime import datetime
         import wave
         print("debug 保存流式音频文件")
-        with wave.open(f"recorded_audios/received_audio-{datetime.now().strftime("%Y%m%d%H%M%S")}.wav", "wb") as f:
+        with wave.open(f"recorded_audios/received_audio-{datetime.now().strftime('%Y%m%d%H%M%S')}.wav", "wb") as f:
             f.setnchannels(1)
             f.setsampwidth(2)
             f.setframerate(16000)

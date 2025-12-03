@@ -45,6 +45,10 @@ class ParaformerConfig:
     def n_chunk_feature(self):
         return self.config["paraformer-zh-streaming"]["n_chunk_feature"]
 
+    @property
+    def debug(self):
+        return self.config['debug']
+
 
 
 asr_config = ParaformerConfig()

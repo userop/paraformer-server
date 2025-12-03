@@ -249,7 +249,8 @@ class VADStreamProcessor:
             self._triggered = False
             self._voiced_frames = []
             self._ring.clear()
-            return out
+            if len(out) is not 0 and out is not None:
+                return out[0][0]
 
         # 新增逻辑：如果本次调用期间（timestamp >= call_start_ts）有新增的 voiced_frames，
         # 将本次调用新增部分合成一个即时返回段（用于低延迟实时识别）。
@@ -264,7 +265,8 @@ class VADStreamProcessor:
                 # 因此后续调用仍会保留上下文；但同时本次调用会即时返回这一段供 ASR 使用。
                 out.append((segment, start_time, end_time))
 
-        return out[0][0]
+        if len(out) is not 0 and out is not None:
+            return out[0][0]
 
 
 class Model:

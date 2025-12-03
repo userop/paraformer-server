@@ -20,8 +20,7 @@ async def lifespan(_app: FastAPI):
     devices = os.environ.get("CUDA_VISIBLE_DEVICES", '0')
     asr_model.load_model(devices)
     yield  # fastapi service
-    # 后处理
-    asr_model.clear()
+
 
 app = FastAPI(lifespan=lifespan)
 
