@@ -42,16 +42,17 @@ class AudioCache:
         if timestamp <= self._last_time:
             return
         if _ == 0:
+            bits = self._hand_frame(vad_call, **kwargs)
+            if len(bits):
+                self._raw_buffer.extend(bits)
             self.final = True
             return
         self._seg_len += _
         bisect.insort(self._meta_cache, (timestamp, data[12:]))
         if self._seg_len >= asr_config.chunk_size_bits:
-            _pcm = bytearray()
-            for meta in self._meta_cache:
-                _pcm.extend(meta[1])
-            # vad 检查没问题再放到 _raw_buffer
-            self._raw_buffer.extend(vad_call(_pcm, **kwargs))
+            bits = self._hand_frame(vad_call, **kwargs)
+            if len(bits):
+                self._raw_buffer.extend(bits)
             self._last_time = self._meta_cache[-1][0]
             self._seg_len = 0
             self._meta_cache.clear()
@@ -60,11 +61,18 @@ class AudioCache:
         if self.final:
             if asr_config.debug:
                 self.debug_save()
-            yield self._raw_buffer + b'\x00' * (asr_config.chunk_size_bits - len(self._raw_buffer))
+            if self._seg_len >0:
+                yield self._raw_buffer + b'\x00' * (asr_config.chunk_size_bits - len(self._raw_buffer))
         else:
             while len(self._raw_buffer) >= asr_config.chunk_size_bits:
                 yield self._raw_buffer[:asr_config.chunk_size_bits]
                 self._raw_buffer = self._raw_buffer[asr_config.chunk_size_bits:]
+
+    def _hand_frame(self, call: Callable, **kwargs):
+        _pcm = bytearray()
+        for meta in self._meta_cache:
+            _pcm.extend(meta[1])
+        return call(_pcm, **kwargs)
 
     def debug_save(self):
         from datetime import datetime
