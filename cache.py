@@ -37,7 +37,7 @@ class AudioCache:
 
         插入数据，丢弃乱序数据,自动排序
 
-        vad_call 行为：  传入一段音频流，做完静音切片后返回处理完的音频流
+        vad_call 行为：  传入一段音频流，判断这个音频流中是否有人说话的声音
         """
         timestamp, _ = struct.unpack(">dI", data[:12])
         if asr_config.debug:
@@ -46,7 +46,7 @@ class AudioCache:
             return
         if _ == 0:
             bits = self._hand_frame(vad_call, is_final=True,**kwargs)
-            if len(bits):
+            if bits is not None:
                 self._raw_buffer.extend(bits)
             self.final = True
             return
@@ -54,7 +54,7 @@ class AudioCache:
         if timestamp - self._last_time >= self.SEQUENCE_TIME:
             bits = self._hand_frame(vad_call, **kwargs)
             # 如果是静音片段，计算超时时间
-            if len(bits):
+            if bits is not None:
                 self._raw_buffer.extend(bits)
             else:
                 self._stop_time = timestamp - self._last_time
@@ -82,7 +82,9 @@ class AudioCache:
         _pcm = bytearray()
         for meta in self._meta_cache:
             _pcm.extend(meta[1])
-        return call(_pcm, **kwargs)
+        if call(_pcm, **kwargs):
+            return _pcm
+        return None
 
     def debug_save(self):
         from datetime import datetime

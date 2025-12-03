@@ -1,12 +1,10 @@
-from typing import Optional
-import webrtcvad
-import threading
-import time
-import tempfile
 import os
-import numpy
 import subprocess
-from typing import List, Tuple, Optional
+import tempfile
+import time
+
+import webrtcvad
+
 
 def convert_audio_to_pcm(data: bytes, input_format: str = None, sr: int = 16000, ac: int = 1) -> bytes:
     """
@@ -112,7 +110,7 @@ class AudioVAD:
       数据长度要求 10ms / 20ms / 30ms，其它长度 没效果
 
     """
-    def __init__(self, frame_ms: int = 30, vad_mode: int = 3):
+    def __init__(self, vad_mode: int = 2):
         self.vad = webrtcvad.Vad(vad_mode)
 
     def stream_vad(self, audio: bytes, frame_ms: int = 30) -> bool:
@@ -128,8 +126,10 @@ class AudioVAD:
         # 判断位数不足bits就补0
         if len(audio) < bits:
             audio = audio + (bits - len(audio)) * b'\x00'
+        else:
+            audio = audio[:bits]
         try:
-            is_speech = self.vad.is_speech(audio[:bits], sample_rate=16000)
+            is_speech = self.vad.is_speech(audio, sample_rate=16000)
         except Exception:
             # 如果 frame 长度不对或 webrtcvad 抛错，视为静音
             is_speech = False
@@ -138,19 +138,10 @@ class AudioVAD:
     def split2join(self,
                    audio: bytes,
                    frame_ms: int = 30,
-                   sr: int = 16000,
-                   vad_mode: int = 3,
-                   padding_frames: int = 8,
-                   start_prop: float = 0.6,
-                   end_prop: float = 0.9,
-                   return_pcm: bool = True,
-                   feed_chunk_frames: int = 50
-                   , input_format=None) -> bytes:
+                   input_format=None) -> bytes:
         """
         将音频按照长度时间长度切片
         将识别出来有人说话的片段拼接到一起合并得到新的音频流
-
-        :param audio:
         :return:
 
         Args:
@@ -160,7 +151,7 @@ class AudioVAD:
         bits = int(16000 * frame_ms * 1e-3 * 2)
 
         # 1) 转换为 PCM int16 mono bytes
-        pcm_bytes = convert_audio_to_pcm(audio, input_format=input_format, sr=sr, ac=1)
+        pcm_bytes = convert_audio_to_pcm(audio, input_format=input_format)
 
         # 2) 切片并获取分段合成无静音片段
         offset = 0

@@ -11,7 +11,7 @@ from starlette.websockets import WebSocketState
 
 from config import asr_config
 from model_serve import asr_model
-from model_serve import VADStreamProcessor
+from audio_vad import AudioVAD
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -29,7 +29,8 @@ app = FastAPI(lifespan=lifespan)
 async def recognize_audio_file(file: UploadFile = File(...)):
     content = await file.read()
     with asr_model.recognize(stream=False) as model:
-        asr_res = model.audio_recognition(content)
+        pcm_buf = AudioVAD().split2join(content)
+        asr_res = model.audio_recognition(pcm_buf)
     return {
       "text": asr_res,
       "usage": {
@@ -55,12 +56,12 @@ async def recognize_audio_stream(websocket: WebSocket):
     #数据初始化
     await websocket.accept()
     audio_cache = AudioCache()
-    vad_processor = VADStreamProcessor()
+    audio_vad = AudioVAD()
     with asr_model.recognize(stream=True) as model:
         try:
             while True:
                 data = await asyncio.wait_for(websocket.receive_bytes(), timeout=5)
-                audio_cache.append_meta(data, vad_processor.accept)
+                audio_cache.append_meta(data, audio_vad.stream_vad)
                 for pcm_buf in audio_cache:
                     text = model.audio_stream_recognition(pcm_buf)
                     if websocket.client_state == WebSocketState.CONNECTED:
