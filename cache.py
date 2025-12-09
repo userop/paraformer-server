@@ -5,6 +5,7 @@ import bisect
 import struct
 from typing import List, Tuple, Callable
 from config import asr_config
+import numpy
 
 
 class AudioCache:
@@ -40,12 +41,14 @@ class AudioCache:
         vad_call 行为：  传入一段音频流，判断这个音频流中是否有人说话的声音
         """
         timestamp, _ = struct.unpack(">dI", data[:12])
+        print(timestamp, _)
+        print(numpy.frombuffer(data, dtype=numpy.int16).astype(numpy.float32) / 32768.0)
         if asr_config.debug:
             self.pcm_buffer.extend(data[12:])
         if timestamp < self._last_time:
             return
         if _ == 0:
-            bits = self._hand_frame(vad_call, is_final=True,**kwargs)
+            bits = self._hand_frame(vad_call, **kwargs)
             if bits is not None:
                 self._raw_buffer.extend(bits)
             self.final = True
@@ -66,17 +69,16 @@ class AudioCache:
         中间停顿型的静音，会导致停顿前的部分字符无法识别。
         :return:
         """
+        while len(self._raw_buffer) >= asr_config.chunk_size_bits:
+            yield self._raw_buffer[:asr_config.chunk_size_bits], False
+            self._raw_buffer = self._raw_buffer[asr_config.chunk_size_bits:]
+        if self._stop_time >= self.STOP_TIME:
+            yield self._raw_buffer + b'\x00' * (asr_config.chunk_size_bits - len(self._raw_buffer)), False
         if self.final:
             if asr_config.debug:
                 self.debug_save()
-            if len(self._raw_buffer) > 0:
-                yield self._raw_buffer + b'\x00' * (asr_config.chunk_size_bits - len(self._raw_buffer))
-        else:
-            while len(self._raw_buffer) >= asr_config.chunk_size_bits:
-                yield self._raw_buffer[:asr_config.chunk_size_bits]
-                self._raw_buffer = self._raw_buffer[asr_config.chunk_size_bits:]
-            if self._stop_time >= self.STOP_TIME:
-                yield self._raw_buffer + b'\x00' * (asr_config.chunk_size_bits - len(self._raw_buffer))
+            yield self._raw_buffer + b'\x00' * (asr_config.chunk_size_bits - len(self._raw_buffer)), True
+
 
     def _hand_frame(self, call: Callable, **kwargs):
         _pcm = bytearray()

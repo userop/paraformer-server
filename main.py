@@ -7,7 +7,7 @@ from fastapi import FastAPI, WebSocket, HTTPException, UploadFile, File
 from starlette.responses import HTMLResponse
 from contextlib import asynccontextmanager
 
-from starlette.websockets import WebSocketState
+from starlette.websockets import WebSocketDisconnect
 
 from config import asr_config
 from model_serve import asr_model
@@ -29,7 +29,7 @@ app = FastAPI(lifespan=lifespan)
 async def recognize_audio_file(file: UploadFile = File(...)):
     content = await file.read()
     with asr_model.recognize(stream=False) as model:
-        pcm_buf = AudioVAD().split2join(content)
+        pcm_buf = AudioVAD(vad_mode=3).split2join(content)
         asr_res = model.audio_recognition(pcm_buf)
     return {
       "text": asr_res,
@@ -56,19 +56,24 @@ async def recognize_audio_stream(websocket: WebSocket):
     #数据初始化
     await websocket.accept()
     audio_cache = AudioCache()
-    audio_vad = AudioVAD()
+    audio_vad = AudioVAD(vad_mode=3)
     with asr_model.recognize(stream=True) as model:
         try:
             while True:
-                data = await asyncio.wait_for(websocket.receive_bytes(), timeout=5)
+                data = await websocket.receive_bytes()
                 audio_cache.append_meta(data, audio_vad.stream_vad)
-                for pcm_buf in audio_cache:
-                    text = model.audio_stream_recognition(pcm_buf)
-                    if websocket.client_state == WebSocketState.CONNECTED:
-                        await asyncio.wait_for(websocket.send_json(
-                            {"text": text.replace(' ', ''), "is_final": audio_cache.final}), timeout=5)
+                for pcm_buf, final in audio_cache:
+                    text = model.audio_stream_recognition(pcm_buf).replace(' ', '')
+                    if len(text) > 0:
+                        await websocket.send_json({"text": text,"is_final": False})
+                    if final:
+                        await websocket.send_json({"text": '', "is_final": True})
+                        await websocket.close()
+                        return
         except asyncio.TimeoutError:
             print("websocket timeout")
+        except WebSocketDisconnect:
+            print("websocket disconnect")
 
 @app.get("/health")
 async def health():
