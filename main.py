@@ -28,21 +28,25 @@ app = FastAPI(lifespan=lifespan)
 @app.post("/v1/audio/transcriptions")
 async def recognize_audio_file(file: UploadFile = File(...)):
     content = await file.read()
-    with asr_model.recognize(stream=False) as model:
-        pcm_buf = AudioVAD(vad_mode=3).split2join(content)
-        asr_res = model.audio_recognition(pcm_buf)
+    try:
+        with asr_model.recognize(stream=False) as model:
+            pcm_buf = AudioVAD(vad_mode=3).split2join(content)
+            asr_res = model.audio_recognition(pcm_buf)
+    except Exception as e:
+        print(e)
+        asr_res = "无效输入/请检查语音输入，耳麦是否正确接入"
     return {
-      "text": asr_res,
-      "usage": {
-        "type": "tokens",
-        "input_tokens": 14,
-        "input_token_details": {
-          "text_tokens": 0,
-          "audio_tokens": 14
-        },
-        "output_tokens": 45,
-        "total_tokens": 59
-      }
+        "text": asr_res,
+        "usage": {
+            "type": "tokens",
+            "input_tokens": 14,
+            "input_token_details": {
+                "text_tokens": 0,
+                "audio_tokens": 14
+            },
+            "output_tokens": 45,
+            "total_tokens": 59
+        }
     }
 
 @app.websocket("/ws/audio")
