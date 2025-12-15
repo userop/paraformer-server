@@ -1,10 +1,9 @@
-FROM python:3.12.12-slim-bookworm
+FROM paraformer_serve:base
 
 WORKDIR /app/serve
 COPY . /app/serve
 
-RUN chmod +x start.sh && pip install -r requirements.txt && pip cache purge
-
 EXPOSE 8400
 
+RUN chmod +x start.sh
 CMD ["sh", "start.sh"]

@@ -6,6 +6,7 @@ import time
 import tempfile
 import os
 import numpy
+import torch
 import subprocess
 from funasr import AutoModel
 
@@ -199,12 +200,12 @@ class ParaModelASR:
         self.zh_model: ModelList = ModelList()
         self.stream_model: ModelList = ModelList()
 
-    def load_model(self, devices: str) -> None:
+    def load_model(self) -> None:
         """
         根据指定的GPU加载模型，给每个模型上锁，防止多个任务调同一个模型导致报错
         :return:
         """
-        devices = [int(dev) for dev in devices.split(",")]
+        devices = list(range(torch.cuda.device_count()))
         self.zh_model.load_model(asr_config.zh_model, devices)
         self.stream_model.load_model(asr_config.zh_stream_model, devices)
 

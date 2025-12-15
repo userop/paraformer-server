@@ -1,3 +1,5 @@
 
 
-docker build . -t paraformer_serve:latest
+docker build . -t paraformer_serve:base -f Dockerfile_Base
+
+docker build . -t paraformer_serve:latest -f Dockerfile

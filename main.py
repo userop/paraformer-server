@@ -17,8 +17,7 @@ from audio_vad import AudioVAD
 async def lifespan(_app: FastAPI):
     # 加载模型
     print("开始加载模型")
-    devices = os.environ.get("CUDA_VISIBLE_DEVICES", '0')
-    asr_model.load_model(devices)
+    asr_model.load_model()
     yield  # fastapi service
 
 
