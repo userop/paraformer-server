@@ -1,7 +1,11 @@
 FROM ubuntu:24.04 AS builder
 
 # 环境准备阶段
-RUN apt update && apt install build-essential git python3-dev pip -y && git clone https://github.com/wiseman/py-webrtcvad.git
+# 下载ffmpeg 静态编译文件
+RUN apt update && apt install build-essential git python3-dev pip curl -y  && \
+    curl "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" -o ffmpeg-release-amd64-static.tar.xz && \
+    tar -xJf ffmpeg-release-amd64-static.tar.xz && \
+    git clone https://github.com/wiseman/py-webrtcvad.git
 
 # 编译vad库
 RUN cd py-webrtcvad && git checkout 2.0.10 && python3 setup.py bdist_wheel
@@ -13,8 +17,10 @@ WORKDIR /app/serve
 COPY requirements.txt /app/serve
 #  -- webrtcvad-2.0.11.dev0-cp312-cp312-linux_x86_64.whl
 COPY --from=builder /py-webrtcvad/dist/webrtcvad-*linux_x86_64.whl /app/serve
+# 拷贝 ffmpeg ffmpeg-7.0.2-amd64-static/ffmpeg 用于容器内运行ffmpeg 处理音频文件
+COPY --from=builder /ffmpeg-*amd64-static/ffmpeg /usr/bin/
 
-RUN ls /app/serve
+RUN chmod 755 /usr/bin/ffmpeg
 RUN  pip install webrtcvad-*linux_x86_64.whl -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple && \
      pip install -r requirements.txt -i https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple &&  \
      rm -f webrtcvad-*linux_x86_64.whl &&  \

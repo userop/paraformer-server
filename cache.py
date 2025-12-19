@@ -4,7 +4,7 @@
 import bisect
 import struct
 from typing import List, Tuple, Callable
-from config import asr_config
+from config import asr_stream_config, IS_DEBUG
 import numpy
 
 
@@ -25,7 +25,7 @@ class AudioCache:
         self._last_time = 0
         self._stop_time = 0
         self.final = False
-        if asr_config.debug:
+        if IS_DEBUG:
             self.pcm_buffer = bytearray()
 
     def append_meta(self, data: bytes, vad_call: Callable, **kwargs):
@@ -43,7 +43,7 @@ class AudioCache:
         timestamp, _ = struct.unpack(">dI", data[:12])
         print(timestamp, _)
         print(numpy.frombuffer(data, dtype=numpy.int16).astype(numpy.float32) / 32768.0)
-        if asr_config.debug:
+        if IS_DEBUG:
             self.pcm_buffer.extend(data[12:])
         if timestamp < self._last_time:
             return
@@ -69,15 +69,15 @@ class AudioCache:
         中间停顿型的静音，会导致停顿前的部分字符无法识别。
         :return:
         """
-        while len(self._raw_buffer) >= asr_config.chunk_size_bits:
-            yield self._raw_buffer[:asr_config.chunk_size_bits], False
-            self._raw_buffer = self._raw_buffer[asr_config.chunk_size_bits:]
+        while len(self._raw_buffer) >= asr_stream_config.chunk_size_bits:
+            yield self._raw_buffer[:asr_stream_config.chunk_size_bits], False
+            self._raw_buffer = self._raw_buffer[asr_stream_config.chunk_size_bits:]
         if self._stop_time >= self.STOP_TIME:
-            yield self._raw_buffer + b'\x00' * (asr_config.chunk_size_bits - len(self._raw_buffer)), False
+            yield self._raw_buffer + b'\x00' * (asr_stream_config.chunk_size_bits - len(self._raw_buffer)), False
         if self.final:
-            if asr_config.debug:
+            if asr_stream_config.debug:
                 self.debug_save()
-            yield self._raw_buffer + b'\x00' * (asr_config.chunk_size_bits - len(self._raw_buffer)), True
+            yield self._raw_buffer + b'\x00' * (asr_stream_config.chunk_size_bits - len(self._raw_buffer)), True
 
 
     def _hand_frame(self, call: Callable, **kwargs):

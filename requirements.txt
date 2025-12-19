@@ -9,3 +9,4 @@ colorlog~=6.10.1
 torch==2.9.0
 torchaudio==2.9.0
 python-multipart==0.0.20
+transformers~=4.57.1

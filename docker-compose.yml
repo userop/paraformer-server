@@ -1,13 +1,24 @@
 version: "3.8"
 services:
   asr_serve:
-    image: paraformer_serve:latest
+    image: paraformer_serve:base
     restart: always
     environment:
-      APP_N_WORKERS: ${APP_N_WORKERS:-4}
-      CUDA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-0}
+      APP_N_WORKERS: ${APP_N_WORKERS:-2}
+      N_MODEL_SINGLE_GPU: ${N_MODEL_SINGLE_GPU:-1}
+      ASR_MODEL_LOAD: ${ASR_MODEL_LOAD:-Paraformer;speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch}
+      ASR_STREAM_MODEL_LOAD: ${ASR_STREAM_MODEL_LOAD:-ParaformerStream;speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online}
     ports:
-# 宿主机端口：容器端口
       - "8400:8400"
     volumes:
-      - ./model.yaml:/app/serve/model.yaml
+      - ${MODEL_PATH:-/data1/models/}:/app/serve/models:ro
+    # 用于代码调试
+      - /opt/package/paraformer_serve:/app/serve/coder
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+            # 语音模型封装是按照逻辑GPU映射的，多卡场景在这里指定就可以了。
+              device_ids: ["0"]
+              capabilities: [gpu]

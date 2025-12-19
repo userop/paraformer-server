@@ -1,74 +1,59 @@
+"""
+在程序初始化时
+"""
+
 import os
-from yaml import safe_load
+
+N_MODEL_SINGLE_GPU = float(os.environ.get("N_MODEL_SINGLE_GPU", 5))
+IS_DEBUG = os.environ.get("DEBUG", False)
 
 
 class ParaformerConfig:
-    """
-    配置信息只读，防止篡改
-    """
-    def __init__(self):
-        """
-        先从环境变量中加载，再到后台配置文件中加载，如果配置文件也没有抛出异常
-        """
-        self._asr_model_path = os.environ.get("ASR_MODEL_PATH")
-        self._asr_stream_model_path = os.environ.get("ASR_STREAM_MODEL_PATH")
-        self._debug = os.environ.get("DEBUG")
-        # 流式识别模型输入数据参数，输入处理不好会直接影响识别效果
-        self._n_chunk_frame = os.environ.get("N_CHUNK_FRAME",10)
-        self._n_chunk_feature = os.environ.get("N_CHUNK_FEATURE",5)
-        self._encoder_chunk_size = os.environ.get("ENCODER_CHUNK_SIZE",4)
-        self._decoder_chunk_size = os.environ.get("DECODER_CHUNK_SIZE",1)
-
-        if os.path.exists("model.yaml"):
-            with open('model.yaml', 'r', encoding='utf-8') as f:
-                config = safe_load(f)
-                if not self._asr_model_path:
-                    self._asr_model_path = config["paraformer-zh"]["model_path"]
-                if not self._asr_stream_model_path:
-                    self._asr_stream_model_path = config["paraformer-zh-streaming"]["model_path"]
-                if not self._debug:
-                    self._debug = config.get("debug")
-
-    @property
-    def zh_model(self):
-        return self._asr_model_path
-
-    @property
-    def zh_stream_model(self):
-        return self._asr_stream_model_path
-
-    @property
-    def chunk_size_bits(self):
-        """
-        获取模型想要的字节切片长度
-        采样 60ms @16kHz
-        2个字节对应1个采样点
-
-        每次识别，输入帧数  （推荐10帧 也就是600ms）
-        :return:
-        """
-        return int(16000 * 60 * 1e-3 * 2 * self._n_chunk_frame)
-
-    @property
-    def encoder_chunk_size(self):
-        return self._encoder_chunk_size
-
-    @property
-    def decoder_chunk_size(self):
-        return self._decoder_chunk_size
-
-    @property
-    def n_chunk_frame(self):
-        return self._n_chunk_frame
-
-    @property
-    def n_chunk_feature(self):
-        return self._n_chunk_feature
-
-    @property
-    def debug(self):
-        return self._debug
+    cls_name = 'Paraformer'
+    model_name: str
 
 
+class FunAudioLLMConfig:
+    cls_name = 'FunAudioLLM'
+    model_name: str
 
-asr_config = ParaformerConfig()
+
+class ParaformerStreamConfig:
+    cls_name = 'ParaformerStream'
+    model_name = os.environ.get("ASR_STREAM_MODEL_NAME")
+    n_chunk_frame = os.environ.get("N_CHUNK_FRAME", 10)
+    n_chunk_feature = os.environ.get("N_CHUNK_FEATURE", 5)
+    encoder_chunk_size = os.environ.get("ENCODER_CHUNK_SIZE",4)
+    decoder_chunk_size = os.environ.get("DECODER_CHUNK_SIZE",1)
+    chunk_size_bits = int(16000 * 60 * 1e-3 * 2 * n_chunk_frame)
+
+
+ASR_LIST = [ParaformerConfig, FunAudioLLMConfig]
+ASR_STREAM_LIST = [ParaformerStreamConfig]
+
+# ASR openai
+def _get_asr_config():
+    loader = os.environ.get("ASR_MODEL_LOAD")
+    cls, model_name = loader.split(';', 1)
+    for Conf in ASR_LIST:
+        if Conf.cls_name == cls:
+            Conf.model_name = model_name
+            return Conf
+    raise Exception(f"{cls}未匹配可用加载器: {[conf.cls_name for conf in ASR_LIST]}")
+
+
+# Websocket ASR stream
+# ASR openai
+def _get_stream_asr_config():
+    loader = os.environ.get("ASR_STREAM_MODEL_LOAD")
+    cls, model_name = loader.split(';', 1)
+    for Conf in ASR_STREAM_LIST:
+        if Conf.cls_name == cls:
+            Conf.model_name = model_name
+            return Conf
+    raise Exception(f"{cls}未匹配可用加载器: {[conf.cls_name for conf in ASR_STREAM_LIST]}")
+
+
+asr_config = _get_asr_config()
+asr_stream_config = _get_stream_asr_config()
+
