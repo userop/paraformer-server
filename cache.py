@@ -5,7 +5,6 @@ import bisect
 import struct
 from typing import List, Tuple, Callable
 from config import asr_stream_config, IS_DEBUG
-import numpy
 
 
 class AudioCache:
@@ -41,8 +40,6 @@ class AudioCache:
         vad_call 行为：  传入一段音频流，判断这个音频流中是否有人说话的声音
         """
         timestamp, _ = struct.unpack(">dI", data[:12])
-        print(timestamp, _)
-        print(numpy.frombuffer(data, dtype=numpy.int16).astype(numpy.float32) / 32768.0)
         if IS_DEBUG:
             self.pcm_buffer.extend(data[12:])
         if timestamp < self._last_time:
@@ -75,7 +72,7 @@ class AudioCache:
         if self._stop_time >= self.STOP_TIME:
             yield self._raw_buffer + b'\x00' * (asr_stream_config.chunk_size_bits - len(self._raw_buffer)), False
         if self.final:
-            if asr_stream_config.debug:
+            if IS_DEBUG:
                 self.debug_save()
             yield self._raw_buffer + b'\x00' * (asr_stream_config.chunk_size_bits - len(self._raw_buffer)), True
 

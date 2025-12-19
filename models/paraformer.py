@@ -2,7 +2,7 @@ import os
 import numpy
 
 from models.base import BaseModel, TempFileModel
-from config import asr_config
+from config import asr_stream_config
 
 
 class Paraformer(TempFileModel):
@@ -15,7 +15,7 @@ class Paraformer(TempFileModel):
         # 读取文件内容，ASR
         with open(self.temp_file.name, 'rb') as reader:
             data = reader.read()
-        res = self._model.generate(data)[0]['text']
+        res = self._model.generate(data, log_level="ERROR")[0]['text']
         if not res:
             res = "未识别到有效人声"
         return res
@@ -36,8 +36,8 @@ class ParaformerStream(BaseModel):
         :return:
         """
         np_asr_float32 = numpy.frombuffer(data, dtype=numpy.int16).astype(numpy.float32) / 32768.0
-        res = self._model.generate(input=np_asr_float32, cache=self._cache, is_final=is_final,
-                                   chunk_size=[0, asr_config.n_chunk_frame, asr_config.n_chunk_feature],
-                             encoder_chunk_look_back=asr_config.encoder_chunk_size,
-                             decoder_chunk_look_back=asr_config.decoder_chunk_size)
+        res = self._model.generate(input=np_asr_float32, cache=self._cache, is_final=is_final, log_level="ERROR",
+                                   chunk_size=[0, asr_stream_config.n_chunk_frame, asr_stream_config.n_chunk_feature],
+                             encoder_chunk_look_back=asr_stream_config.encoder_chunk_size,
+                             decoder_chunk_look_back=asr_stream_config.decoder_chunk_size)
         return res[0]["text"]

@@ -151,9 +151,17 @@ async def health():
         return HTTPException(status_code=500, detail="未成功加载ASR模型")
     return {"models": f"paraformer-zh: {asr_model.zh_model.n_gpu}, paraformer-zh-stream: {asr_model.stream_model.n_gpu}"}
 
-@app.get("/test")
-async def test():
-    '''读取本地wav文件，切片调用定义的函数debug'''
+import struct
+@app.websocket("/ws/test")
+async def test(websocket: WebSocket):
+    await websocket.accept()
+    while True:
+        data = await websocket.receive_bytes()
+        flag = struct.pack("I", data[:4])
+        print("data :", data.decode())
+        await websocket.send_bytes(b'alive')
+        if flag == 1:
+            await websocket.close()
 
 
 # 用于测试的简单 HTML 页面（包含录音和连接逻辑）

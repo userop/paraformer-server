@@ -13,7 +13,6 @@ class BaseModel:
     def __init__(self, device, model, **kwargs):
         self._cache = {}
         self._lock = threading.Lock()
-        print(kwargs, model)
         self._model = AutoModel(model=model, device=device, disable_update=True, **kwargs)
 
     def __exit__(self, exc_type, exc_val, exc_tb):
